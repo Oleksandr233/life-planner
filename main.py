@@ -60,6 +60,38 @@ THEMES = {
     "sunset":  {"name": "Закат",   "price": 100, "bg": "#3a1c2b", "fg": "#ffd9c0"},
 }
 
+# Общий стиль для страниц входа/регистрации/приветствия
+PAGE_CSS = """
+    * { box-sizing: border-box; }
+    body {
+        background: #f4f4f7; color: #222;
+        font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+        line-height: 1.5; margin: 0; padding: 24px;
+        min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    }
+    .card {
+        background: #fff; border: 1px solid rgba(0,0,0,0.08);
+        border-radius: 16px; padding: 32px; width: 100%; max-width: 360px;
+        box-shadow: 0 8px 30px rgba(0,0,0,0.06); text-align: center;
+    }
+    h1 { font-size: 24px; margin: 0 0 6px; }
+    .subtitle { opacity: 0.6; font-size: 14px; margin: 0 0 24px; }
+    input {
+        width: 100%; padding: 11px 12px; margin-bottom: 12px;
+        border: 1px solid rgba(0,0,0,0.15); border-radius: 10px; font-size: 15px;
+    }
+    button {
+        width: 100%; background: #6c5ce7; color: #fff; border: none;
+        border-radius: 10px; padding: 12px; font-size: 15px; font-weight: 600; cursor: pointer;
+    }
+    button:hover { background: #5a4bd1; }
+    .links { margin-top: 18px; font-size: 14px; }
+    a { color: #6c5ce7; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .error { background: #ffe9e9; color: #b00020; border-radius: 10px;
+             padding: 12px; margin-bottom: 16px; font-size: 14px; }
+"""
+
 
 # --- Помощники ---
 def hash_password(password: str) -> str:
@@ -85,18 +117,26 @@ def habit_view(habit, today):
     return mark, streak, done
 
 
-def auth_page(title: str, action: str) -> str:
+def auth_page(title: str, action: str, subtitle: str, other_text: str,
+              other_link: str, error: str = "") -> str:
+    error_html = f'<div class="error">{error}</div>' if error else ""
     return f"""
-    <html><head><title>{title}</title></head>
-    <body style="font-family: sans-serif; max-width: 360px; margin: 40px auto;">
-      <h1>{title}</h1>
-      <form action="{action}" method="post">
-        <p><input name="username" placeholder="Имя пользователя" required style="width:100%;padding:8px"></p>
-        <p><input name="password" type="password" placeholder="Пароль" required style="width:100%;padding:8px"></p>
-        <button type="submit" style="padding:8px 16px">{title}</button>
-      </form>
-      <p><a href="/login">Войти</a> · <a href="/register">Регистрация</a></p>
-    </body></html>
+    <html>
+    <head><title>{title} · Планировщик жизни</title><style>{PAGE_CSS}</style></head>
+    <body>
+      <div class="card">
+        <h1>🎯 {title}</h1>
+        <p class="subtitle">{subtitle}</p>
+        {error_html}
+        <form action="{action}" method="post">
+          <input name="username" placeholder="Имя пользователя" required>
+          <input name="password" type="password" placeholder="Пароль" required>
+          <button type="submit">{title}</button>
+        </form>
+        <p class="links">{other_text} <a href="{other_link}">{'Войти' if other_link == '/login' else 'Регистрация'}</a></p>
+      </div>
+    </body>
+    </html>
     """
 
 
@@ -107,14 +147,19 @@ def home(request: Request):
     with Session(engine) as session:
         user = current_user(request, session)
         if user is None:
-            return HTMLResponse("""
-            <html><head><title>Планировщик жизни</title></head>
-            <body style="font-family:sans-serif; max-width:360px; margin:40px auto; text-align:center">
-              <h1>Планировщик жизни</h1>
-              <p>Цели, привычки и немного игры, чтобы их держать.</p>
-              <p><a href="/register">Регистрация</a> · <a href="/login">Войти</a></p>
-            </body></html>
-            """)
+            return HTMLResponse(f"""
+                    <html>
+                    <head><title>Планировщик жизни</title><style>{PAGE_CSS}</style></head>
+                    <body>
+                      <div class="card">
+                        <h1>🎯 Планировщик жизни</h1>
+                        <p class="subtitle">Цели на день, неделю, месяц и год — и привычки, чтобы до них дойти.</p>
+                        <a href="/register"><button>Начать</button></a>
+                        <p class="links">Уже есть аккаунт? <a href="/login">Войти</a></p>
+                      </div>
+                    </body>
+                    </html>
+                    """)
 
         goals = session.exec(select(Goal).where(Goal.user_id == user.id)).all()
         habits = session.exec(select(Habit).where(Habit.user_id == user.id)).all()
@@ -434,7 +479,8 @@ def rename_habit(request: Request, habit_id: int, name: str = Form()):
 # --- Аккаунты ---
 @app.get("/register", response_class=HTMLResponse)
 def register_page():
-    return auth_page("Регистрация", "/register")
+    return auth_page("Регистрация", "/register",
+                     "Создайте аккаунт, чтобы начать", "Уже есть аккаунт?", "/login")
 
 
 @app.post("/register")
@@ -442,7 +488,9 @@ def register(request: Request, username: str = Form(), password: str = Form()):
     with Session(engine) as session:
         exists = session.exec(select(User).where(User.username == username)).first()
         if exists:
-            return HTMLResponse("Имя уже занято. <a href='/register'>назад</a>", status_code=400)
+            return HTMLResponse(auth_page("Регистрация", "/register",
+                                          "Создайте аккаунт, чтобы начать", "Уже есть аккаунт?", "/login",
+                                          error="Это имя уже занято."), status_code=400)
         user = User(username=username, password_hash=hash_password(password))
         session.add(user)
         session.commit()
@@ -453,7 +501,8 @@ def register(request: Request, username: str = Form(), password: str = Form()):
 
 @app.get("/login", response_class=HTMLResponse)
 def login_page():
-    return auth_page("Вход", "/login")
+    return auth_page("Вход", "/login",
+                     "Рады видеть снова", "Нет аккаунта?", "/register")
 
 
 @app.post("/login")
@@ -461,7 +510,10 @@ def login(request: Request, username: str = Form(), password: str = Form()):
     with Session(engine) as session:
         user = session.exec(select(User).where(User.username == username)).first()
         if user is None or not verify_password(password, user.password_hash):
-            return HTMLResponse("Неверное имя или пароль. <a href='/login'>назад</a>", status_code=400)
+            return HTMLResponse(auth_page("Вход", "/login",
+                                          "Рады видеть снова", "Нет аккаунта?", "/register",
+                                          error="Неверное имя или пароль."), status_code=400)
+
         request.session["user_id"] = user.id
     return RedirectResponse("/", status_code=303)
 
