@@ -247,6 +247,11 @@ def home():
 def create_habit(name: str = Form(), goal_id: str = Form("")):
     gid = int(goal_id) if goal_id else None
     with Session(engine) as session:
+        # Проверяем, что выбранная цель реально существует.
+        # Если её нет (устаревшая страница, цель удалили) — привязываем
+        # привычку ни к чему, вместо ссылки на "призрак".
+        if gid is not None and session.get(Goal, gid) is None:
+            gid = None
         session.add(Habit(name=name, goal_id=gid))
         session.commit()
     return RedirectResponse("/", status_code=303)
