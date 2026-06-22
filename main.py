@@ -144,12 +144,20 @@ def home(request: Request):
                 fire = f" 🔥{streak}" if streak else ""
                 sub += f"<li style='margin-left:20px'>↳ {mark} {hb.name}{fire}</li>"
             items += f"""
-            <li>{gmark} <b>{goal.title}</b>
-                <form action="/goals/{goal.id}/toggle" method="post" style="display:inline">
-                    <button type="submit">выполнено</button>
-                </form>
-                <ul>{sub}</ul>
-            </li>"""
+                        <li>{gmark} <b>{goal.title}</b>
+                            <form action="/goals/{goal.id}/toggle" method="post" style="display:inline">
+                                <button type="submit">выполнено</button>
+                            </form>
+                            <form action="/goals/{goal.id}/rename" method="post" style="display:inline">
+                                <input name="title" placeholder="новое название" required>
+                                <button type="submit">переименовать</button>
+                            </form>
+                            <form action="/goals/{goal.id}/delete" method="post" style="display:inline"
+                                  onsubmit="return confirm('Удалить цель? Её привычки останутся, но станут без цели.')">
+                                <button type="submit">удалить</button>
+                            </form>
+                            <ul>{sub}</ul>
+                        </li>"""
         if items == "":
             items = "<li><i>пока пусто</i></li>"
         goals_html += f"<h3>{h}</h3><ul>{items}</ul>"
@@ -167,9 +175,18 @@ def home(request: Request):
             action = "<small>сделано сегодня</small>"
         else:
             action = f"""<form action="/habits/{habit.id}/done" method="post" style="display:inline">
-                <button type="submit">выполнить</button>
-            </form>"""
-        habits_html += f"<li>{mark} {habit.name}{fire} <small>(цель: {serves})</small> {action}</li>"
+                    <button type="submit">выполнить</button>
+                </form>"""
+        controls = f"""
+                <form action="/habits/{habit.id}/rename" method="post" style="display:inline">
+                    <input name="name" placeholder="новое название" required>
+                    <button type="submit">переименовать</button>
+                </form>
+                <form action="/habits/{habit.id}/delete" method="post" style="display:inline"
+                      onsubmit="return confirm('Удалить привычку?')">
+                    <button type="submit">удалить</button>
+                </form>"""
+        habits_html += f"<li>{mark} {habit.name}{fire} <small>(цель: {serves})</small> {action} {controls}</li>"
 
     shop_html = ""
     for key, t in THEMES.items():
@@ -350,6 +367,66 @@ def activate_theme(request: Request, key: str):
         if key in THEMES and owned:
             user.active_theme = key
             session.add(user)
+            session.commit()
+    return RedirectResponse("/", status_code=303)
+
+
+# --- Удаление и редактирование ---
+@app.post("/goals/{goal_id}/delete")
+def delete_goal(request: Request, goal_id: int):
+    with Session(engine) as session:
+        user = current_user(request, session)
+        if user is None:
+            return RedirectResponse("/login", status_code=303)
+        goal = session.get(Goal, goal_id)
+        if goal and goal.user_id == user.id:
+            # сначала отвязываем привычки этой цели, чтобы не было «призрачных» ссылок
+            linked = session.exec(select(Habit).where(Habit.goal_id == goal.id)).all()
+            for hb in linked:
+                hb.goal_id = None
+                session.add(hb)
+            session.delete(goal)
+            session.commit()
+    return RedirectResponse("/", status_code=303)
+
+
+@app.post("/goals/{goal_id}/rename")
+def rename_goal(request: Request, goal_id: int, title: str = Form()):
+    with Session(engine) as session:
+        user = current_user(request, session)
+        if user is None:
+            return RedirectResponse("/login", status_code=303)
+        goal = session.get(Goal, goal_id)
+        if goal and goal.user_id == user.id and title.strip():
+            goal.title = title.strip()
+            session.add(goal)
+            session.commit()
+    return RedirectResponse("/", status_code=303)
+
+
+@app.post("/habits/{habit_id}/delete")
+def delete_habit(request: Request, habit_id: int):
+    with Session(engine) as session:
+        user = current_user(request, session)
+        if user is None:
+            return RedirectResponse("/login", status_code=303)
+        habit = session.get(Habit, habit_id)
+        if habit and habit.user_id == user.id:
+            session.delete(habit)
+            session.commit()
+    return RedirectResponse("/", status_code=303)
+
+
+@app.post("/habits/{habit_id}/rename")
+def rename_habit(request: Request, habit_id: int, name: str = Form()):
+    with Session(engine) as session:
+        user = current_user(request, session)
+        if user is None:
+            return RedirectResponse("/login", status_code=303)
+        habit = session.get(Habit, habit_id)
+        if habit and habit.user_id == user.id and name.strip():
+            habit.name = name.strip()
+            session.add(habit)
             session.commit()
     return RedirectResponse("/", status_code=303)
 
