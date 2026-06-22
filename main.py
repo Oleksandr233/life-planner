@@ -1,4 +1,10 @@
 import os
+import bcrypt
+from datetime import date, timedelta
+from fastapi import FastAPI, Form, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
+from sqlmodel import SQLModel, Field, Session, create_engine, select
+from starlette.middleware.sessions import SessionMiddleware
 
 from datetime import date, timedelta
 from fastapi import FastAPI, Form
@@ -39,6 +45,12 @@ class ThemeUnlock(SQLModel, table=True):
     key: str
 
 
+class User(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    username: str = Field(unique=True, index=True)
+    password_hash: str
+
+
 # Адрес базы берём из окружения; если его нет (на твоём компьютере) — локальный SQLite
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///habits.db")
 
@@ -59,6 +71,9 @@ with Session(engine) as session:
 
 app = FastAPI()
 
+SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-change-me")
+app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
+
 HORIZONS = ["Сегодня", "Эта неделя", "Этот месяц", "Этот год"]
 
 # Темы: название, цена и два цвета (фон и текст)
@@ -68,6 +83,27 @@ THEMES = {
     "forest":  {"name": "Лес",     "price": 50,  "bg": "#1b3a2b", "fg": "#d8f3dc"},
     "sunset":  {"name": "Закат",   "price": 100, "bg": "#3a1c2b", "fg": "#ffd9c0"},
 }
+
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
+def verify_password(password: str, password_hash: str) -> bool:
+    return bcrypt.checkpw(password.encode(), password_hash.encode())
+
+
+def auth_page(title: str, action: str) -> str:
+    return f"""
+    <html><head><title>{title}</title></head>
+    <body style="font-family: sans-serif; max-width: 360px; margin: 40px auto;">
+      <h1>{title}</h1>
+      <form action="{action}" method="post">
+        <p><input name="username" placeholder="Имя пользователя" required style="width:100%;padding:8px"></p>
+        <p><input name="password" type="password" placeholder="Пароль" required style="width:100%;padding:8px"></p>
+        <button type="submit" style="padding:8px 16px">{title}</button>
+      </form>
+      <p><a href="/login">Войти</a> · <a href="/register">Регистрация</a></p>
+    </body></html>
+    """
 
 
 def habit_view(habit, today):
@@ -79,7 +115,7 @@ def habit_view(habit, today):
 
 
 @app.get("/", response_class=HTMLResponse)
-def home():
+def home(request: Request):
     today = date.today()
     with Session(engine) as session:
         goals = session.exec(select(Goal)).all()
@@ -90,6 +126,15 @@ def home():
     unlocked.add("default")
 
     theme = THEMES.get(active, THEMES["default"])
+
+    user_id = request.session.get("user_id")
+    if user_id:
+        with Session(engine) as s:
+            me = s.get(User, user_id)
+        who = f"Вы вошли как <b>{me.username}</b> · <a href='/logout'>выйти</a>" if me else "<a href='/login'>войти</a>"
+    else:
+        who = "<a href='/login'>войти</a> · <a href='/register'>регистрация</a>"
+
     goal_title_by_id = {g.id: g.title for g in goals}
 
     # --- Цели по горизонтам ---
@@ -202,6 +247,7 @@ def home():
     </head>
     <body>
         <div class="container">
+            <p style="text-align:right">{who}</p>
             <div class="coins">💰 {coins} монет</div>
 
             <h1>Мои цели</h1>
@@ -324,4 +370,43 @@ def activate_theme(key: str):
             settings.active_theme = key
             session.add(settings)
             session.commit()
+    return RedirectResponse("/", status_code=303)
+
+@app.get("/register", response_class=HTMLResponse)
+def register_page():
+    return auth_page("Регистрация", "/register")
+
+
+@app.post("/register")
+def register(request: Request, username: str = Form(), password: str = Form()):
+    with Session(engine) as session:
+        exists = session.exec(select(User).where(User.username == username)).first()
+        if exists:
+            return HTMLResponse("Имя уже занято. <a href='/register'>назад</a>", status_code=400)
+        user = User(username=username, password_hash=hash_password(password))
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        request.session["user_id"] = user.id   # сразу «вошли»
+    return RedirectResponse("/", status_code=303)
+
+
+@app.get("/login", response_class=HTMLResponse)
+def login_page():
+    return auth_page("Вход", "/login")
+
+
+@app.post("/login")
+def login(request: Request, username: str = Form(), password: str = Form()):
+    with Session(engine) as session:
+        user = session.exec(select(User).where(User.username == username)).first()
+        if user is None or not verify_password(password, user.password_hash):
+            return HTMLResponse("Неверное имя или пароль. <a href='/login'>назад</a>", status_code=400)
+        request.session["user_id"] = user.id
+    return RedirectResponse("/", status_code=303)
+
+
+@app.get("/logout")
+def logout(request: Request):
+    request.session.clear()
     return RedirectResponse("/", status_code=303)
