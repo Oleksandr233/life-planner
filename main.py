@@ -1,3 +1,5 @@
+import os
+
 from datetime import date, timedelta
 from fastapi import FastAPI, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -37,8 +39,14 @@ class ThemeUnlock(SQLModel, table=True):
     key: str
 
 
-# --- База данных ---
-engine = create_engine("sqlite:///habits.db")
+# Адрес базы берём из окружения; если его нет (на твоём компьютере) — локальный SQLite
+DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///habits.db")
+
+# Render иногда выдаёт адрес со старой схемой postgres:// — SQLAlchemy ждёт postgresql://
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+engine = create_engine(DATABASE_URL)
 SQLModel.metadata.create_all(engine)
 
 # кошелёк и настройки должны существовать (по одной строке с id=1)
